@@ -399,40 +399,36 @@
     }
     canvas { width: 100%; height: 100%; display: block; }
 
-    .control-deck {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-
-    .btn-industrial {
+    /* BOTÃO ÚNICO DE DESLIGAMENTO GERAL */
+    .btn-master {
+      width: 100%;
       padding: 16px;
       border-radius: 12px;
-      border: 1px solid transparent;
+      border: 1px solid rgba(255,255,255,0.1);
       font-weight: 800;
-      font-size: 0.9rem;
-      letter-spacing: 0.5px;
+      font-size: 0.95rem;
+      letter-spacing: 0.8px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 10px;
-      transition: all 0.15s;
+      transition: all 0.2s;
     }
 
-    .btn-industrial:active { transform: translateY(2px); }
-    .btn-industrial:disabled { opacity: 0.35; cursor: not-allowed; }
+    .btn-master:active { transform: translateY(2px); }
+    .btn-master:disabled { opacity: 0.35; cursor: not-allowed; }
 
-    .btn-start {
-      background: linear-gradient(180deg, #10b981 0%, #059669 100%);
-      color: #022c22;
-      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
-    }
-
-    .btn-stop {
+    .btn-shutdown {
       background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
       color: #fff;
-      box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+      box-shadow: 0 4px 18px rgba(239, 68, 68, 0.35);
+    }
+
+    .btn-reactivate {
+      background: linear-gradient(180deg, #10b981 0%, #059669 100%);
+      color: #022c22;
+      box-shadow: 0 4px 18px rgba(16, 185, 129, 0.35);
     }
 
     .terminal {
@@ -461,7 +457,7 @@
       <div class="brand-icon">IoT</div>
       <div>
         <h1>alisson_reservatorio/telemetria</h1>
-        <p>Sistema Supervisório SCADA &bull; Conexão Real HiveMQ</p>
+        <p>Sistema Supervisório SCADA &bull; Monitoramento Automático</p>
       </div>
     </div>
     <div class="status-bar">
@@ -537,7 +533,7 @@
       </div>
     </section>
 
-    <!-- DIREITA: KPIs, GRÁFICO, BOTÕES E LOG -->
+    <!-- DIREITA: KPIs, GRÁFICO, BOTÃO GERAL E LOG -->
     <div class="right-col">
       <!-- KPIs -->
       <div class="kpi-grid">
@@ -573,22 +569,18 @@
         </div>
       </section>
 
-      <!-- BOTÕES DE COMANDO -->
+      <!-- BOTÃO GERAL DO SISTEMA + TERMINAL -->
       <section class="card" style="padding:16px;">
         <div class="card-header" style="margin-bottom:12px;">
-          <span class="card-title">Comando Remoto (Tópico: alisson_reservatorio/comando)</span>
-        </div>
-        <div class="control-deck">
-          <button class="btn-industrial btn-start" id="btnLigar" onclick="enviarComando('1')" disabled>
-            &#9654; LIGAR BOMBA (1)
-          </button>
-          <button class="btn-industrial btn-stop" id="btnDesligar" onclick="enviarComando('0')" disabled>
-            &#9632; DESLIGAR BOMBA (0)
-          </button>
+          <span class="card-title">Segurança &amp; Logs do Sistema</span>
         </div>
 
+        <button class="btn-master btn-shutdown" id="btnSistema" onclick="alternarSistema()" disabled>
+          ⏻ DESLIGAR TODO O SISTEMA
+        </button>
+
         <div class="terminal" id="terminal" style="margin-top:14px;">
-          [SISTEMA] Iniciando cliente MQTT real (sem simulação)...<br>
+          [SISTEMA] Iniciando cliente MQTT real...<br>
         </div>
       </section>
     </div>
@@ -604,6 +596,7 @@
   const TOPICO_COMANDO    = 'alisson_reservatorio/comando';
 
   let somAtivo = true;
+  let sistemaDesligado = false;
   const historicoNivel    = [];
   const historicoSetpoint = [];
   const MAX_PONTOS        = 45;
@@ -638,12 +631,12 @@
   // ==========================================
   const clientId = 'scada_alisson_' + Math.random().toString(16).substring(2, 10);
 
-  logTerminal(`Conectando a ${BROKER_URL} (ID: ${clientId})...`);
+  logTerminal(`Conectando a ${BROKER_URL}...`);
 
   const client = mqtt.connect(BROKER_URL, {
     clientId: clientId,
     clean: true,
-    protocolVersion: 4, // MQTT 3.1.1 padrão (evita rejeição do HiveMQ)
+    protocolVersion: 4,
     connectTimeout: 10000,
     reconnectPeriod: 3000
   });
@@ -651,15 +644,13 @@
   client.on('connect', () => {
     document.getElementById('mqttLed').className = 'led online';
     document.getElementById('mqttText').innerText = 'Conectado ao HiveMQ';
-    document.getElementById('btnLigar').disabled = false;
-    document.getElementById('btnDesligar').disabled = false;
+    document.getElementById('btnSistema').disabled = false;
 
     logTerminal('CONECTADO com sucesso ao broker.hivemq.com!', 'log-ok');
 
     client.subscribe(TOPICO_TELEMETRIA, { qos: 0 }, (err) => {
       if (!err) {
-        logTerminal(`Escutando tópico real: ${TOPICO_TELEMETRIA}`, 'log-cmd');
-        logTerminal('Aguardando dados publicados pelo script Python...');
+        logTerminal(`Escutando tópico: ${TOPICO_TELEMETRIA}`, 'log-cmd');
       } else {
         logTerminal(`Erro ao assinar tópico: ${err.message}`, 'log-err');
       }
@@ -669,7 +660,6 @@
   client.on('reconnect', () => {
     document.getElementById('mqttLed').className = 'led';
     document.getElementById('mqttText').innerText = 'Reconectando...';
-    logTerminal('Tentando reconectar ao HiveMQ...');
   });
 
   client.on('error', (err) => {
@@ -681,60 +671,71 @@
   client.on('offline', () => {
     document.getElementById('mqttLed').className = 'led offline';
     document.getElementById('mqttText').innerText = 'Offline';
-    document.getElementById('btnLigar').disabled = true;
-    document.getElementById('btnDesligar').disabled = true;
+    document.getElementById('btnSistema').disabled = true;
     logTerminal('Desconectado do broker MQTT.', 'log-err');
   });
 
   client.on('message', (topic, payload) => {
     if (topic !== TOPICO_TELEMETRIA) return;
 
-    const textoBruto = payload.toString();
     try {
-      const dados = JSON.parse(textoBruto);
+      const dados = JSON.parse(payload.toString());
       atualizarInterface(dados);
     } catch (e) {
-      logTerminal(`Mensagem recebida (não-JSON): ${textoBruto}`, 'log-err');
+      logTerminal(`Pacote inválido recebido: ${payload.toString()}`, 'log-err');
     }
   });
 
-  function enviarComando(cmd) {
+  // ==========================================
+  // 3. BOTÃO ÚNICO DE DESLIGAMENTO GERAL
+  // ==========================================
+  function alternarSistema() {
     if (!client.connected) {
-      logTerminal('Não conectado ao HiveMQ para enviar comando.', 'log-err');
+      logTerminal('Não conectado ao HiveMQ.', 'log-err');
       return;
     }
-    tocarBipe(cmd === '1' ? 680 : 380, 0.1);
-    client.publish(TOPICO_COMANDO, cmd, { qos: 0 });
-    const desc = cmd === '1' ? 'LIGAR BOMBA (1)' : 'DESLIGAR BOMBA (0)';
-    logTerminal(`Publicado em ${TOPICO_COMANDO} -> ${desc}`, 'log-cmd');
+
+    const btn = document.getElementById('btnSistema');
+    sistemaDesligado = !sistemaDesligado;
+
+    if (sistemaDesligado) {
+      tocarBipe(300, 0.2);
+      client.publish(TOPICO_COMANDO, '0', { qos: 0 });
+      btn.className = 'btn-master btn-reactivate';
+      btn.innerText = '↻ RELIGAR SISTEMA (MODO AUTOMÁTICO)';
+      logTerminal('COMANDO GERAL: Sistema desligado pelo operador (enviado 0).', 'log-err');
+    } else {
+      tocarBipe(650, 0.12);
+      client.publish(TOPICO_COMANDO, '1', { qos: 0 });
+      btn.className = 'btn-master btn-shutdown';
+      btn.innerText = '⏻ DESLIGAR TODO O SISTEMA';
+      logTerminal('COMANDO GERAL: Sistema religado pelo operador (enviado 1).', 'log-ok');
+    }
   }
 
   // ==========================================
-  // 3. ATUALIZAÇÃO VISUAL COM DADOS REAIS
+  // 4. ATUALIZAÇÃO VISUAL COM DADOS REAIS
   // ==========================================
   function atualizarInterface(dados) {
     const nivel    = Math.min(100, Math.max(0, Number(dados.nivel ?? 0)));
     const setpoint = Math.min(100, Math.max(0, Number(dados.setpoint ?? 50)));
-    const bomba    = Boolean(dados.bomba);
+    const bomba    = Boolean(dados.bomba) && !sistemaDesligado;
     const sensorOk = dados.sensor_ok !== false;
     const alerta   = Boolean(dados.alerta);
 
     document.getElementById('lastUpdate').innerText = 'Último pacote: ' + new Date().toLocaleTimeString();
 
-    // Tanque e Água
     const waterMass = document.getElementById('waterMass');
     waterMass.style.height = `${nivel}%`;
-    waterMass.className = alerta ? 'water-mass danger' : 'water-mass';
+    waterMass.className = (alerta || sistemaDesligado) ? 'water-mass danger' : 'water-mass';
 
     document.getElementById('pctText').innerText = `${nivel}%`;
     document.getElementById('litrosText').innerText = `${nivel * 10} L / 1000 L`;
 
-    // Setpoint
     document.getElementById('spMarker').style.bottom = `${setpoint}%`;
     document.getElementById('spBadge').innerText = `SP: ${setpoint}%`;
     document.getElementById('kpiSetpoint').innerText = `${setpoint}%`;
 
-    // Bomba e Tubulação
     const impeller = document.getElementById('impeller');
     const pipeFlow = document.getElementById('pipeFlow');
     const bubbles  = document.getElementById('bubbles');
@@ -752,25 +753,28 @@
       impeller.classList.remove('running');
       pipeFlow.classList.remove('running');
       bubbles.classList.remove('active');
-      document.getElementById('pumpLabel').innerText = 'PARADA';
-      document.getElementById('pumpLabel').style.color = 'var(--muted)';
+      document.getElementById('pumpLabel').innerText = sistemaDesligado ? 'DESLIGADA (GERAL)' : 'PARADA';
+      document.getElementById('pumpLabel').style.color = sistemaDesligado ? 'var(--red)' : 'var(--muted)';
       document.getElementById('flowRate').innerText = '0.0 L/m';
       document.getElementById('kpiBomba').innerText = 'DESLIGADA';
       document.getElementById('kpiBomba').style.color = 'var(--muted)';
     }
 
-    // Sensor e Alerta
     const kpiSensor = document.getElementById('kpiSensor');
     kpiSensor.innerText = sensorOk ? 'ONLINE' : 'FALHA';
     kpiSensor.style.color = sensorOk ? 'var(--green)' : 'var(--red)';
 
     const kpiAlerta = document.getElementById('kpiAlerta');
-    kpiAlerta.innerText = alerta ? 'CRÍTICO!' : 'NORMAL';
-    kpiAlerta.style.color = alerta ? 'var(--red)' : 'var(--green)';
+    if (sistemaDesligado) {
+      kpiAlerta.innerText = 'DESLIGADO';
+      kpiAlerta.style.color = 'var(--red)';
+    } else {
+      kpiAlerta.innerText = alerta ? 'CRÍTICO!' : 'NORMAL';
+      kpiAlerta.style.color = alerta ? 'var(--red)' : 'var(--green)';
+    }
 
-    if (alerta) tocarBipe(880, 0.12);
+    if (alerta && !sistemaDesligado) tocarBipe(880, 0.12);
 
-    // Atualiza Gráfico
     historicoNivel.push(nivel);
     historicoSetpoint.push(setpoint);
     if (historicoNivel.length > MAX_PONTOS) {
@@ -781,7 +785,7 @@
   }
 
   // ==========================================
-  // 4. GRÁFICO DE TENDÊNCIA EM CANVAS
+  // 5. GRÁFICO DE TENDÊNCIA EM CANVAS
   // ==========================================
   function desenharGrafico() {
     const canvas = document.getElementById('trendChart');
@@ -812,7 +816,6 @@
 
     const stepX = w / (MAX_PONTOS - 1);
 
-    // Linha Setpoint
     ctx.save();
     ctx.strokeStyle = '#f59e0b';
     ctx.lineWidth = 2;
@@ -827,7 +830,6 @@
     ctx.stroke();
     ctx.restore();
 
-    // Linha Nível
     ctx.strokeStyle = '#06b6d4';
     ctx.lineWidth = 2.5;
     ctx.beginPath();
